@@ -196,6 +196,41 @@ function loop() {
 }
 
 loop();
+
+// Growth sound - soft rising tone when planting
+let audioCtx = null;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playGrowSound(hue) {
+  if (!audioCtx) return;
+  const freq = 150 + (hue / 360) * 200;
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  osc.frequency.linearRampToValueAtTime(freq * 2, audioCtx.currentTime + 0.6);
+
+  gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.6);
+}
+
+const origPlant = plantSeed;
+plantSeed = function(x, y) {
+  initAudio();
+  origPlant(x, y);
+  playGrowSound(Math.random() * 360);
+};
 </script>
 </body>
 </html>
