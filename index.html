@@ -3,31 +3,144 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>star moss</title>
-<meta name="description" content="Drag to grow. Vines reach for light.">
-<meta property="og:title" content="star moss">
-<meta property="og:description" content="Drag to grow. Vines reach for light.">
+<title>star moss — revive the world tree</title>
+<meta name="description" content="Plant star moss to revive the ancient world tree. Click to grow.">
+<meta property="og:title" content="star moss — revive the world tree">
+<meta property="og:description" content="Plant star moss to revive the ancient world tree.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://yurukusa.github.io/star-moss/">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="star moss">
-<meta name="twitter:description" content="Drag to grow. Vines reach for light.">
+<meta name="twitter:description" content="Plant star moss to revive the ancient world tree.">
 <style>
-* { margin: 0; padding: 0; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; background: #060810; }
 canvas { display: block; cursor: crosshair; }
+#ui {
+  position: fixed; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 16px 20px; pointer-events: none; z-index: 10;
+}
+#stats {
+  color: rgba(255,255,255,0.5);
+  font: 13px/1.6 "Helvetica Neue", sans-serif;
+  letter-spacing: 0.05em;
+}
+#stats .count { font-size: 22px; color: rgba(255,255,255,0.7); }
+#stats .label { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(255,255,255,0.3); }
+#tree-info {
+  text-align: right;
+  color: rgba(255,255,255,0.5);
+  font: 13px/1.6 "Helvetica Neue", sans-serif;
+}
+#tree-info .stage-name { font-size: 14px; color: rgba(255,255,255,0.6); }
+#tree-bar-wrap {
+  width: 120px; height: 4px; background: rgba(255,255,255,0.08);
+  border-radius: 2px; margin-top: 6px; margin-left: auto;
+}
+#tree-bar {
+  height: 100%; background: rgba(140,200,140,0.5);
+  border-radius: 2px; transition: width 0.5s ease;
+}
+#palette {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; pointer-events: auto; z-index: 10;
+}
+.moss-btn {
+  width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.15);
+  cursor: pointer; transition: all 0.3s; opacity: 0.3; pointer-events: none;
+  position: relative;
+}
+.moss-btn.unlocked { opacity: 0.7; pointer-events: auto; }
+.moss-btn.active { opacity: 1; border-color: rgba(255,255,255,0.6); transform: scale(1.2); }
+.moss-btn:hover { transform: scale(1.15); }
+.moss-btn .lock { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: rgba(255,255,255,0.4); }
+#milestone {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: rgba(255,255,255,0.8); font: 16px/1.6 "Helvetica Neue", sans-serif;
+  text-align: center; pointer-events: none; opacity: 0; transition: opacity 1s;
+  z-index: 20; text-shadow: 0 0 20px rgba(140,200,140,0.5);
+}
+#milestone .title { font-size: 20px; margin-bottom: 4px; }
+#milestone .desc { font-size: 12px; color: rgba(255,255,255,0.5); letter-spacing: 0.1em; }
 #hint {
-  position: fixed; left: 0; right: 0; bottom: 24px;
+  position: fixed; left: 0; right: 0; bottom: 60px;
   text-align: center; color: rgba(255,255,255,0.12);
   font: 12px/1 "Helvetica Neue", sans-serif; letter-spacing: 0.3em;
   pointer-events: none; transition: opacity 3s;
+}
+#idle-msg {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  color: rgba(255,255,255,0.6); font: 14px/1.8 "Helvetica Neue", sans-serif;
+  text-align: center; pointer-events: none; opacity: 0; z-index: 20;
+  transition: opacity 2s;
 }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint">drag to grow</div>
+
+<div id="ui">
+  <div id="stats">
+    <div class="count" id="mossCount">0</div>
+    <div class="label">star moss</div>
+  </div>
+  <div id="tree-info">
+    <div class="stage-name" id="treeName">dead stump</div>
+    <div id="tree-bar-wrap"><div id="tree-bar" style="width:0%"></div></div>
+  </div>
+</div>
+
+<div id="palette"></div>
+<div id="milestone"><div class="title"></div><div class="desc"></div></div>
+<div id="hint">click or drag to plant</div>
+<div id="idle-msg"></div>
+
 <script>
+// === GAME STATE ===
+const MOSS_TYPES = [
+  { name: 'seedling',     hueBase: 120, sat: 40, unlock: 0,    label: '苗',       desc: 'The first moss. Humble, but alive.' },
+  { name: 'crystal',      hueBase: 200, sat: 55, unlock: 50,   label: '結晶苔',   desc: 'Cold light. Grows in silence.' },
+  { name: 'ember',        hueBase: 20,  sat: 60, unlock: 200,  label: '灯苔',     desc: 'A warm glow in the dark.' },
+  { name: 'aurora',       hueBase: -1,  sat: 50, unlock: 500,  label: '極光苔',   desc: 'Shifts through every color.' },
+  { name: 'starweaver',   hueBase: 45,  sat: 35, unlock: 1500, label: '星織苔',   desc: 'Weaves constellations as it grows.' },
+  { name: 'worldroot',    hueBase: 90,  sat: 30, unlock: 3000, label: '世界樹の根', desc: 'The roots remember.' },
+];
+
+const TREE_STAGES = [
+  { min: 0,    name: 'dead stump',      desc: '枯れた切り株',     trunkH: 0.08, branches: 0, leaves: 0,   glow: 0   },
+  { min: 30,   name: 'first sprout',    desc: '最初の芽吹き',     trunkH: 0.12, branches: 2, leaves: 0,   glow: 0   },
+  { min: 100,  name: 'young sapling',   desc: '若木',             trunkH: 0.20, branches: 4, leaves: 5,   glow: 0   },
+  { min: 400,  name: 'growing tree',    desc: '成長する樹',       trunkH: 0.30, branches: 6, leaves: 15,  glow: 0.1 },
+  { min: 1000, name: 'ancient tree',    desc: '古き樹',           trunkH: 0.45, branches: 8, leaves: 30,  glow: 0.2 },
+  { min: 2500, name: 'world tree',      desc: '世界樹',           trunkH: 0.60, branches: 12, leaves: 50, glow: 0.4 },
+  { min: 5000, name: 'world tree ✦',    desc: '星の世界樹',       trunkH: 0.70, branches: 16, leaves: 80, glow: 0.7 },
+];
+
+let state = {
+  totalMoss: 0,
+  selectedType: 0,
+  unlockedTypes: [0],
+  shownMilestones: [],
+  lastTime: Date.now(),
+};
+
+function saveState() {
+  state.lastTime = Date.now();
+  localStorage.setItem('star-moss-save', JSON.stringify(state));
+}
+
+function loadState() {
+  const s = localStorage.getItem('star-moss-save');
+  if (s) {
+    try {
+      const parsed = JSON.parse(s);
+      Object.assign(state, parsed);
+    } catch(e) {}
+  }
+}
+
+// === CANVAS ===
 const C = document.getElementById('c');
 const ctx = C.getContext('2d');
 let W, H;
@@ -39,23 +152,139 @@ addEventListener('resize', resize);
 const branches = [];
 let hintShown = true;
 
-// Each branch grows from a seed point, splitting and curling
-function createBranch(x, y, angle, depth, hue) {
+// === WORLD TREE DRAWING ===
+function getTreeStage() {
+  let stage = TREE_STAGES[0];
+  for (const s of TREE_STAGES) {
+    if (state.totalMoss >= s.min) stage = s;
+  }
+  return stage;
+}
+
+function getTreeProgress() {
+  const stage = getTreeStage();
+  const idx = TREE_STAGES.indexOf(stage);
+  const next = TREE_STAGES[idx + 1];
+  if (!next) return 1;
+  return (state.totalMoss - stage.min) / (next.min - stage.min);
+}
+
+function drawWorldTree() {
+  const stage = getTreeStage();
+  const progress = getTreeProgress();
+  const cx = W / 2;
+  const groundY = H * 0.85;
+  const trunkHeight = H * stage.trunkH;
+  const trunkWidth = 8 + stage.trunkH * 30;
+
+  // Glow behind tree
+  if (stage.glow > 0) {
+    const glowR = trunkHeight * 1.2;
+    const grad = ctx.createRadialGradient(cx, groundY - trunkHeight * 0.5, 0, cx, groundY - trunkHeight * 0.5, glowR);
+    grad.addColorStop(0, `rgba(120, 180, 120, ${stage.glow * 0.08})`);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, groundY - trunkHeight * 0.5, glowR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Trunk
+  const trunkAlpha = 0.15 + stage.trunkH * 0.3;
+  ctx.strokeStyle = `rgba(80, 100, 70, ${trunkAlpha})`;
+  ctx.lineWidth = trunkWidth;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx, groundY);
+  ctx.lineTo(cx, groundY - trunkHeight);
+  ctx.stroke();
+
+  // Roots
+  ctx.lineWidth = trunkWidth * 0.4;
+  for (let i = 0; i < 3; i++) {
+    const dir = (i - 1) * 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx, groundY);
+    ctx.quadraticCurveTo(cx + dir * 30, groundY + 15, cx + dir * 50, groundY + 5);
+    ctx.stroke();
+  }
+
+  // Branches
+  const seed = 42;
+  ctx.lineWidth = Math.max(1, trunkWidth * 0.25);
+  for (let i = 0; i < stage.branches; i++) {
+    const t = (i + 1) / (stage.branches + 1);
+    const by = groundY - trunkHeight * t;
+    const side = i % 2 === 0 ? 1 : -1;
+    const len = trunkHeight * 0.3 * (0.5 + t * 0.5);
+    const angle = side * (0.4 + Math.sin(i * seed) * 0.3);
+    const ex = cx + Math.cos(angle - Math.PI/2 + side * 0.8) * len;
+    const ey = by + Math.sin(angle - Math.PI/2 + side * 0.8) * len;
+    ctx.beginPath();
+    ctx.moveTo(cx, by);
+    ctx.quadraticCurveTo(cx + side * len * 0.3, by - len * 0.2, ex, ey);
+    ctx.stroke();
+
+    // Leaves (small circles at branch ends)
+    if (stage.leaves > 0) {
+      const leafCount = Math.min(3, Math.ceil(stage.leaves / stage.branches));
+      ctx.globalCompositeOperation = 'lighter';
+      for (let j = 0; j < leafCount; j++) {
+        const lx = ex + (Math.sin(i * 7 + j * 13) * 15);
+        const ly = ey + (Math.cos(i * 11 + j * 17) * 10);
+        const lr = 3 + stage.glow * 8 + Math.sin(Date.now() * 0.001 + i + j) * 2;
+        const leafHue = 100 + Math.sin(i + j) * 40;
+        const grad = ctx.createRadialGradient(lx, ly, 0, lx, ly, lr);
+        grad.addColorStop(0, `hsla(${leafHue}, 50%, 50%, ${0.15 + stage.glow * 0.2})`);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(lx, ly, lr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  // Ground line
+  ctx.strokeStyle = `rgba(60, 80, 50, ${trunkAlpha * 0.5})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 80, groundY);
+  ctx.lineTo(cx + 80, groundY);
+  ctx.stroke();
+}
+
+// === MOSS BRANCHES ===
+function getMossHue(typeIdx) {
+  const mt = MOSS_TYPES[typeIdx] || MOSS_TYPES[0];
+  if (mt.hueBase === -1) return Math.random() * 360; // aurora: random
+  return mt.hueBase + Math.random() * 40 - 20;
+}
+
+function getMossSat(typeIdx) {
+  return (MOSS_TYPES[typeIdx] || MOSS_TYPES[0]).sat;
+}
+
+function createBranch(x, y, angle, depth, typeIdx) {
+  const hue = getMossHue(typeIdx);
+  const isWorldRoot = typeIdx === 5;
   return {
     points: [{ x, y }],
     angle,
-    speed: 1.5 - depth * 0.15,
-    curl: (Math.random() - 0.5) * 0.06,
-    splitChance: 0.012 - depth * 0.001,
+    speed: isWorldRoot ? 2.0 : 1.5 - depth * 0.15,
+    curl: (Math.random() - 0.5) * (isWorldRoot ? 0.03 : 0.06),
+    splitChance: isWorldRoot ? 0.018 : 0.012 - depth * 0.001,
     depth,
-    maxDepth: 5 + Math.floor(Math.random() * 3),
+    maxDepth: isWorldRoot ? 8 : 5 + Math.floor(Math.random() * 3),
     hue,
-    sat: 40 + Math.random() * 20,
+    sat: getMossSat(typeIdx),
     age: 0,
-    maxAge: 150 + Math.random() * 200 - depth * 20,
-    width: Math.max(0.3, 3 - depth * 0.4),
+    maxAge: (isWorldRoot ? 250 : 150) + Math.random() * 200 - depth * 20,
+    width: isWorldRoot ? Math.max(0.5, 4 - depth * 0.3) : Math.max(0.3, 3 - depth * 0.4),
     alive: true,
     stars: [],
+    typeIdx,
   };
 }
 
@@ -65,11 +294,11 @@ function growBranch(b) {
 
   if (b.age > b.maxAge) {
     b.alive = false;
-    // Bloom a star at the tip
     const tip = b.points[b.points.length - 1];
+    const starSize = b.typeIdx === 4 ? 2 + Math.random() * 3 : 1 + Math.random() * 2.5;
     b.stars.push({
       x: tip.x, y: tip.y,
-      size: 1 + Math.random() * 2.5,
+      size: starSize,
       hue: b.hue + Math.random() * 40 - 20,
       twinkle: Math.random() * Math.PI * 2,
       twinkleSpeed: 0.02 + Math.random() * 0.03,
@@ -78,38 +307,37 @@ function growBranch(b) {
   }
 
   const last = b.points[b.points.length - 1];
-
-  // Subtle noise for organic feel
   const noiseVal = Math.sin(b.age * 0.1 + last.x * 0.01) * 0.02;
   b.angle += b.curl + noiseVal;
-
-  // Gravity: slight upward tendency
   b.angle += ((-Math.PI / 2) - b.angle) * 0.001;
 
   const nx = last.x + Math.cos(b.angle) * b.speed;
   const ny = last.y + Math.sin(b.angle) * b.speed;
   b.points.push({ x: nx, y: ny });
 
-  // Split
   if (b.depth < b.maxDepth && Math.random() < b.splitChance) {
     const splitAngle = b.angle + (Math.random() - 0.5) * 1.2;
-    const child = createBranch(nx, ny, splitAngle, b.depth + 1, b.hue + Math.random() * 30 - 15);
+    const child = createBranch(nx, ny, splitAngle, b.depth + 1, b.typeIdx);
     child.maxAge = b.maxAge * (0.5 + Math.random() * 0.3);
     branches.push(child);
   }
 }
 
-function drawBranch(b, t) {
+function drawBranch(b) {
   if (b.points.length < 2) return;
 
-  // Draw the vine
   const totalAlpha = Math.min(b.age / 30, 1);
 
   for (let i = 1; i < b.points.length; i++) {
     const segProgress = i / b.points.length;
     const alpha = totalAlpha * (0.15 + segProgress * 0.25);
     const width = b.width * (1 - segProgress * 0.6);
-    const hue = b.hue + segProgress * 20;
+    let hue = b.hue + segProgress * 20;
+
+    // Aurora type: shift hue over time
+    if (b.typeIdx === 3) {
+      hue = (b.hue + segProgress * 120 + Date.now() * 0.01) % 360;
+    }
 
     ctx.strokeStyle = `hsla(${hue}, ${b.sat}%, 45%, ${alpha})`;
     ctx.lineWidth = width;
@@ -120,7 +348,7 @@ function drawBranch(b, t) {
     ctx.stroke();
   }
 
-  // Draw stars at tips
+  // Stars at tips
   ctx.globalCompositeOperation = 'lighter';
   for (const s of b.stars) {
     s.twinkle += s.twinkleSpeed;
@@ -136,7 +364,6 @@ function drawBranch(b, t) {
     ctx.arc(s.x, s.y, r * 4, 0, Math.PI * 2);
     ctx.fill();
 
-    // Core dot
     ctx.fillStyle = `hsla(${s.hue + 20}, 40%, 95%, ${brightness * 0.8})`;
     ctx.beginPath();
     ctx.arc(s.x, s.y, r * 0.5, 0, Math.PI * 2);
@@ -145,21 +372,27 @@ function drawBranch(b, t) {
   ctx.globalCompositeOperation = 'source-over';
 }
 
+// === PLANTING ===
 function plantSeed(x, y) {
   if (hintShown) {
     document.getElementById('hint').style.opacity = '0';
     hintShown = false;
   }
 
+  const typeIdx = state.selectedType;
   const count = 2 + Math.floor(Math.random() * 3);
-  const baseHue = Math.random() * 360;
   for (let i = 0; i < count; i++) {
     const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.0;
-    branches.push(createBranch(x, y, angle, 0, baseHue + i * 20));
+    branches.push(createBranch(x, y, angle, 0, typeIdx));
   }
+
+  state.totalMoss += count;
+  checkUnlocks();
+  updateUI();
+  saveState();
 }
 
-// Interaction
+// === INTERACTION ===
 let isDown = false;
 C.addEventListener('pointerdown', e => {
   isDown = true;
@@ -173,41 +406,92 @@ C.addEventListener('pointermove', e => {
 C.addEventListener('pointerup', () => isDown = false);
 C.addEventListener('pointerleave', () => isDown = false);
 
-let frame = 0;
-function loop() {
-  // Very slow fade
-  ctx.fillStyle = 'rgba(6, 8, 16, 0.008)';
-  ctx.fillRect(0, 0, W, H);
-
-  frame++;
-
-  for (const b of branches) {
-    growBranch(b);
-    drawBranch(b, frame);
-  }
-
-  // Clean up dead branches with no stars (fully faded)
-  for (let i = branches.length - 1; i >= 0; i--) {
-    if (!branches[i].alive && branches[i].age > branches[i].maxAge + 500) {
-      if (branches[i].stars.length === 0) {
-        branches.splice(i, 1);
-      }
+// === UNLOCKS & MILESTONES ===
+function checkUnlocks() {
+  for (let i = 0; i < MOSS_TYPES.length; i++) {
+    if (state.totalMoss >= MOSS_TYPES[i].unlock && !state.unlockedTypes.includes(i)) {
+      state.unlockedTypes.push(i);
+      showMilestone(`${MOSS_TYPES[i].label} unlocked`, MOSS_TYPES[i].desc);
     }
   }
 
-  // Limit total branches
-  if (branches.length > 300) {
-    branches.splice(0, branches.length - 300);
+  // Tree stage milestones
+  const stage = getTreeStage();
+  const key = 'tree-' + stage.name;
+  if (!state.shownMilestones.includes(key) && state.totalMoss > 0) {
+    state.shownMilestones.push(key);
+    if (stage.min > 0) {
+      showMilestone(stage.desc, `the world tree grows`);
+    }
   }
-
-  requestAnimationFrame(loop);
 }
 
-loop();
+let milestoneTimeout = null;
+function showMilestone(title, desc) {
+  const el = document.getElementById('milestone');
+  el.querySelector('.title').textContent = title;
+  el.querySelector('.desc').textContent = desc;
+  el.style.opacity = '1';
+  clearTimeout(milestoneTimeout);
+  milestoneTimeout = setTimeout(() => { el.style.opacity = '0'; }, 3000);
+}
 
-// Growth sound - soft rising tone when planting
+// === UI ===
+function buildPalette() {
+  const palette = document.getElementById('palette');
+  palette.innerHTML = '';
+  MOSS_TYPES.forEach((mt, i) => {
+    const btn = document.createElement('div');
+    btn.className = 'moss-btn';
+    const hue = mt.hueBase === -1 ? 280 : mt.hueBase;
+    btn.style.background = `hsl(${hue}, ${mt.sat}%, 35%)`;
+
+    if (state.unlockedTypes.includes(i)) {
+      btn.classList.add('unlocked');
+      if (i === state.selectedType) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        state.selectedType = i;
+        buildPalette();
+      });
+      btn.title = mt.label;
+    } else {
+      const lock = document.createElement('div');
+      lock.className = 'lock';
+      lock.textContent = mt.unlock;
+      btn.appendChild(lock);
+      btn.title = `${mt.label} — ${mt.unlock} moss`;
+    }
+    palette.appendChild(btn);
+  });
+}
+
+function updateUI() {
+  document.getElementById('mossCount').textContent = state.totalMoss.toLocaleString();
+  const stage = getTreeStage();
+  document.getElementById('treeName').textContent = stage.desc || stage.name;
+  const progress = getTreeProgress();
+  document.getElementById('tree-bar').style.width = (progress * 100) + '%';
+  buildPalette();
+}
+
+// === IDLE BONUS ===
+function processIdleBonus() {
+  const elapsed = Date.now() - state.lastTime;
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes >= 1) {
+    const bonus = Math.min(minutes, 480); // cap at 8 hours
+    state.totalMoss += bonus;
+    checkUnlocks();
+
+    const el = document.getElementById('idle-msg');
+    el.textContent = `while you were away, ${bonus} moss grew quietly`;
+    el.style.opacity = '1';
+    setTimeout(() => { el.style.opacity = '0'; }, 4000);
+  }
+}
+
+// === AUDIO ===
 let audioCtx = null;
-
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -216,17 +500,13 @@ function initAudio() {
 function playGrowSound(hue) {
   if (!audioCtx) return;
   const freq = 150 + (hue / 360) * 200;
-
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
-
   osc.type = 'triangle';
   osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
   osc.frequency.linearRampToValueAtTime(freq * 2, audioCtx.currentTime + 0.6);
-
   gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
-
   osc.connect(gain);
   gain.connect(audioCtx.destination);
   osc.start();
@@ -237,8 +517,50 @@ const origPlant = plantSeed;
 plantSeed = function(x, y) {
   initAudio();
   origPlant(x, y);
-  playGrowSound(Math.random() * 360);
+  playGrowSound(getMossHue(state.selectedType));
 };
+
+// === MAIN LOOP ===
+let frame = 0;
+function loop() {
+  // Very slow fade
+  ctx.fillStyle = 'rgba(6, 8, 16, 0.008)';
+  ctx.fillRect(0, 0, W, H);
+
+  frame++;
+
+  // Draw world tree behind everything
+  drawWorldTree();
+
+  for (const b of branches) {
+    growBranch(b);
+    drawBranch(b);
+  }
+
+  // Cleanup
+  for (let i = branches.length - 1; i >= 0; i--) {
+    if (!branches[i].alive && branches[i].age > branches[i].maxAge + 500) {
+      if (branches[i].stars.length === 0) {
+        branches.splice(i, 1);
+      }
+    }
+  }
+
+  if (branches.length > 400) {
+    branches.splice(0, branches.length - 400);
+  }
+
+  // Auto-save every 30 seconds
+  if (frame % 1800 === 0) saveState();
+
+  requestAnimationFrame(loop);
+}
+
+// === INIT ===
+loadState();
+processIdleBonus();
+updateUI();
+loop();
 </script>
 </body>
 </html>
